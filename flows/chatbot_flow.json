@@ -1,0 +1,219 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "company": "Payana Overseas",
+    "description": "German Work Program Consultation Flow"
+  },
+  "initial_message": {
+    "text": "Hi welcome to PayanaOverseas! How can I assist you today?",
+    "options": ["Get Started", "Learn More"]
+  },
+  "flow": [
+    {
+      "id": 0,
+      "type": "text_input",
+      "question": "Great! Let's get started. Please enter your full name:",
+      "field": "name",
+      "validation": "name",
+      "required": true,
+      "next": 1
+    },
+    {
+      "id": 1,
+      "type": "text_input",
+      "question": "Thanks {{name}}! What's your age?",
+      "field": "age",
+      "validation": "age",
+      "required": true,
+      "next": 2
+    },
+    {
+      "id": 2,
+      "type": "text_input",
+      "question": "Perfect {{name}}! Please share your email address:",
+      "field": "email",
+      "validation": "email",
+      "required": true,
+      "next": 3
+    },
+    {
+      "id": 3,
+      "type": "single_choice",
+      "question": "Hi {{name}}, are you looking to Study or Work abroad?",
+      "field": "purpose",
+      "options": [
+        {"text": "💼 Work", "value": "Work", "enabled": true},
+        {"text": "📚 Study (Coming Soon)", "value": "Study", "enabled": false}
+      ],
+      "next": {
+        "Work": 4,
+        "Study": 3
+      },
+      "validation_message": "Study option is currently not available. Please select Work to continue."
+    },
+    {
+      "id": 4,
+      "type": "single_choice",
+      "question": "Great choice {{name}}! Do you have a valid passport?",
+      "field": "passport",
+      "options": [
+        {"text": "✅ Yes", "value": "Yes"},
+        {"text": "❌ No", "value": "No"}
+      ],
+      "next": 5
+    },
+    {
+      "id": 5,
+      "type": "single_choice",
+      "question": "{{name}}, do you have a resume to upload?",
+      "field": "resume_upload",
+      "options": [
+        {"text": "📄 Upload Resume", "value": "Upload Resume"},
+        {"text": "🚫 No Resume", "value": "No Resume"}
+      ],
+      "next": 6
+    },
+    {
+      "id": 6,
+      "type": "single_choice",
+      "question": "What is your highest qualification {{name}}?",
+      "field": "qualification",
+      "options": [
+        {"text": "🎓 12th Completed", "value": "12th Completed"},
+        {"text": "🎓 UG Completed", "value": "UG Completed"},
+        {"text": "🎓 PG Completed", "value": "PG Completed"}
+      ],
+      "next": 7
+    },
+    {
+      "id": 7,
+      "type": "single_choice",
+      "question": "How many years of work experience do you have {{name}}?",
+      "field": "experience",
+      "options": [
+        {"text": "🆕 No Experience", "value": "No experience"},
+        {"text": "📈 1-2 Years", "value": "1-2yr"},
+        {"text": "📊 2-3 Years", "value": "2-3yr"},
+        {"text": "📈 3-5 Years", "value": "3-5yr"},
+        {"text": "🏆 5+ Years", "value": "5+yr"}
+      ],
+      "next": 8
+    },
+    {
+      "id": 8,
+      "type": "single_choice",
+      "question": "{{name}}, are you ready to learn the German language?",
+      "field": "germanLanguage",
+      "options": [
+        {"text": "✅ Yes", "value": "Yes"},
+        {"text": "❌ No", "value": "No"}
+      ],
+      "next": 9,
+      "trigger_email": true
+    },
+    {
+      "id": 9,
+      "type": "single_choice",
+      "question": "Excellent {{name}}! Can you continue with this program?",
+      "field": "continueProgram",
+      "options": [
+        {"text": "✅ Yes", "value": "Yes"},
+        {"text": "❌ No", "value": "No"}
+      ],
+      "next": {
+        "Yes": 10,
+        "No": "summary"
+      }
+    },
+    {
+      "id": 10,
+      "type": "single_choice",
+      "question": "When can you kick start your program {{name}}?",
+      "field": "programStartTime",
+      "options": [
+        {"text": "⚡ Immediately", "value": "Immediately"},
+        {"text": "⏳ Need Time", "value": "Need some time"},
+        {"text": "❓ Need Clarification", "value": "Need more clarification"}
+      ],
+      "next": {
+        "Immediately": "summary",
+        "Need some time": "summary",
+        "Need more clarification": 11
+      }
+    },
+    {
+      "id": 11,
+      "type": "single_choice",
+      "question": "{{name}}, would you like to schedule a consultation call with our expert?",
+      "field": "scheduleConsultation",
+      "options": [
+        {"text": "✅ Yes", "value": "Yes"},
+        {"text": "❌ No", "value": "No"}
+      ],
+      "next": {
+        "Yes": 12,
+        "No": "summary"
+      }
+    },
+    {
+      "id": 12,
+      "type": "single_choice",
+      "question": "How would you prefer to have your consultation {{name}}?",
+      "field": "appointmentType",
+      "options": [
+        {"text": "🏢 In-person appointment", "value": "In-person appointment"},
+        {"text": "💻 Google Meet appointment", "value": "Google Meet appointment"}
+      ],
+      "next": {
+        "In-person appointment": "summary",
+        "Google Meet appointment": 13
+      }
+    },
+    {
+      "id": 13,
+      "type": "single_choice",
+      "question": "What time works best for you {{name}}?",
+      "field": "appointmentTime",
+      "options": [
+        {"text": "🌅 Morning (11 AM)", "value": "Morning"},
+        {"text": "🌆 Evening (4 PM)", "value": "Evening"}
+      ],
+      "next": 14
+    },
+    {
+      "id": 14,
+      "type": "text_input",
+      "question": "{{name}}, please choose your preferred date (format: YYYY-MM-DD):",
+      "field": "appointmentDate",
+      "validation": "date",
+      "next": 15
+    },
+    {
+      "id": 15,
+      "type": "single_choice",
+      "question": "Perfect {{name}}! Your {{appointmentTime}} appointment is scheduled for {{appointmentDate}}. Would you like to confirm?",
+      "field": "appointmentConfirmed",
+      "options": [
+        {"text": "✅ Confirm Appointment", "value": "Confirm"},
+        {"text": "❌ Cancel", "value": "No"}
+      ],
+      "next": "summary",
+      "trigger_meeting": true
+    }
+  ],
+  "summary_template": {
+    "title": "📋 Summary of Your Information",
+    "fields": [
+      {"key": "name", "label": "👤 Name"},
+      {"key": "age", "label": "🎂 Age"},
+      {"key": "email", "label": "📧 Email"},
+      {"key": "purpose", "label": "🎯 Purpose"},
+      {"key": "passport", "label": "📘 Passport"},
+      {"key": "qualification", "label": "🎓 Qualification"},
+      {"key": "experience", "label": "💼 Experience"},
+      {"key": "germanLanguage", "label": "🇩🇪 German Language"},
+      {"key": "continueProgram", "label": "📋 Continue Program"}
+    ],
+    "closing_message": "🎉 Thank you {{name}}! Our team will contact you shortly at {{email}}.\n\n📞 For immediate assistance: +91 9003619777\n\n🌟 We're excited to help you achieve your dreams of working in Germany!"
+  }
+}
