@@ -1,4 +1,4 @@
-// server.js - Enhanced with Consultation Support
+// server.js - Add news routes
 const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
@@ -7,11 +7,12 @@ require('dotenv').config();
 
 // Import Routes
 const chatbotRoutes = require('./routes/chatbotRoutes.js');
+const newsRoutes = require('./routes/newsRoutes.js'); // ✅ NEW
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ✅ NEW: Create necessary directories
+// Create necessary directories
 const createDirectories = () => {
   const directories = [
     './uploads',
@@ -27,14 +28,13 @@ const createDirectories = () => {
   });
 };
 
-// Create directories on startup
 createDirectories();
 
-// ✅ NEW: Enhanced Middleware
+// Enhanced Middleware
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
-// ✅ NEW: CORS middleware for React Native
+// CORS middleware for React Native
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -47,7 +47,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ NEW: Static file serving for uploaded resumes
+// Static file serving
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Request logging middleware
@@ -61,7 +61,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ Enhanced Health Check Endpoint
+// Enhanced Health Check Endpoint
 app.get('/api/health', (req, res) => {
   const uptime = process.uptime();
   const memoryUsage = process.memoryUsage();
@@ -70,7 +70,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     service: 'Payana Overseas Backend',
     timestamp: new Date().toISOString(),
-    version: '1.1.0',
+    version: '1.2.0', // ✅ Updated version
     environment: process.env.NODE_ENV || 'development',
     uptime: `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
     memory: {
@@ -82,7 +82,8 @@ app.get('/api/health', (req, res) => {
       'Email Notifications',
       'Consultation Booking',
       'File Upload Support',
-      'Meeting Scheduling'
+      'Meeting Scheduling',
+      'News Proxy Service' // ✅ NEW
     ],
     message: 'All systems operational'
   });
@@ -90,70 +91,7 @@ app.get('/api/health', (req, res) => {
 
 // ✅ Routes
 app.use('/api', chatbotRoutes);
-
-// ✅ NEW: File download endpoint for resumes
-app.get('/api/download/resume/:filename', (req, res) => {
-  try {
-    const filename = req.params.filename;
-    const filepath = path.join(__dirname, 'uploads', 'resumes', filename);
-    
-    if (!fs.existsSync(filepath)) {
-      return res.status(404).json({
-        success: false,
-        message: 'File not found'
-      });
-    }
-    
-    res.download(filepath, filename);
-    console.log(`📥 Resume downloaded: ${filename}`);
-    
-  } catch (error) {
-    console.error('❌ Error downloading file:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to download file',
-      error: error.message
-    });
-  }
-});
-
-// ✅ NEW: System statistics endpoint
-app.get('/api/stats', (req, res) => {
-  try {
-    const consultationsFile = path.join(__dirname, 'data', 'consultations.json');
-    let totalConsultations = 0;
-    
-    if (fs.existsSync(consultationsFile)) {
-      const consultations = JSON.parse(fs.readFileSync(consultationsFile, 'utf8'));
-      totalConsultations = consultations.length;
-    }
-    
-    const uploadsDir = path.join(__dirname, 'uploads', 'resumes');
-    let totalResumes = 0;
-    
-    if (fs.existsSync(uploadsDir)) {
-      totalResumes = fs.readdirSync(uploadsDir).length;
-    }
-    
-    res.json({
-      success: true,
-      data: {
-        totalConsultations,
-        totalResumes,
-        serverUptime: process.uptime(),
-        timestamp: new Date().toISOString()
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error getting stats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get statistics',
-      error: error.message
-    });
-  }
-});
+app.use('/api/news', newsRoutes); // ✅ NEW: News proxy routes
 
 // Enhanced error handling middleware
 app.use((error, req, res, next) => {
@@ -166,20 +104,11 @@ app.use((error, req, res, next) => {
     body: req.body
   });
   
-  // Handle specific error types
   if (error.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({
       success: false,
       message: 'File too large',
       error: 'Maximum file size is 5MB'
-    });
-  }
-  
-  if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid file upload',
-      error: 'Unexpected file field'
     });
   }
   
@@ -191,7 +120,7 @@ app.use((error, req, res, next) => {
   });
 });
 
-// ✅ Enhanced 404 handler
+// Enhanced 404 handler
 app.use('/*', (req, res) => {
   res.status(404).json({
     success: false,
@@ -205,7 +134,11 @@ app.use('/*', (req, res) => {
       'POST /api/consultation/book - Book consultation',
       'GET /api/consultation/bookings - Get bookings (admin)',
       'POST /api/send-german-program-email - German program email',
-      'POST /api/schedule-meeting - Schedule meeting'
+      'POST /api/schedule-meeting - Schedule meeting',
+      'GET /api/news/headlines - Get news headlines', // ✅ NEW
+      'GET /api/news/search - Search news', // ✅ NEW
+      'GET /api/news/sources - Get news sources', // ✅ NEW
+      'GET /api/news/health - News service health' // ✅ NEW
     ],
     timestamp: new Date().toISOString()
   });
@@ -230,7 +163,9 @@ app.listen(PORT, () => {
   console.log(`🤖 Chatbot: http://localhost:${PORT}/api/chatbot/flow`);
   console.log(`📞 Consultation: http://localhost:${PORT}/api/consultation/book`);
   console.log(`📧 Email service: http://localhost:${PORT}/api/send-*`);
-  console.log(`📥 File uploads: ./uploads/resumes/`);
+  console.log(`📰 News headlines: http://localhost:${PORT}/api/news/headlines`); // ✅ NEW
+  console.log(`🔍 News search: http://localhost:${PORT}/api/news/search`); // ✅ NEW
+  console.log(`📡 News sources: http://localhost:${PORT}/api/news/sources`); // ✅ NEW
   console.log(`💾 Data storage: ./data/`);
   console.log('🚀 ═══════════════════════════════════════════════════════════');
   console.log('✅ Features Available:');
@@ -240,26 +175,16 @@ app.listen(PORT, () => {
   console.log('   • Meeting scheduling');
   console.log('   • Form validation & error handling');
   console.log('   • CORS enabled for React Native');
+  console.log('   • News proxy service with caching'); // ✅ NEW
+  console.log('   • Rate limiting and security'); // ✅ NEW
   console.log('🚀 ═══════════════════════════════════════════════════════════');
   
-  // Log server info
   console.log('📋 Server Information:');
   Object.entries(serverInfo).forEach(([key, value]) => {
     console.log(`   ${key}: ${value}`);
   });
   
   console.log('🚀 ═══════════════════════════════════════════════════════════');
-});
-
-// ✅ NEW: Graceful shutdown handling
-process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully...');
-  process.exit(0);
-});
-
-process.on('SIGINT', () => {
-  console.log('🛑 SIGINT received, shutting down gracefully...');
-  process.exit(0);
 });
 
 module.exports = app;
