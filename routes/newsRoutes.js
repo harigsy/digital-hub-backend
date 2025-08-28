@@ -1,21 +1,58 @@
-// routes/newsRoutes.js - Secure News API Proxy
+// routes/newsRoutes.js - Vercel-Optimized News API Proxy
 const express = require('express');
 const axios = require('axios');
-const NodeCache = require('node-cache');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 
-// Initialize cache (5 minutes TTL)
-const newsCache = new NodeCache({ stdTTL: 300, checkperiod: 60 });
+// ✅ VERCEL FIX: Simple in-memory cache (per function instance)
+// Note: Cache will reset on cold starts, but that's acceptable for serverless
+let newsCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+// Simple cache helper functions
+const getFromCache = (key) => {
+  const item = newsCache.get(key);
+  if (!item) return null;
+  
+  if (Date.now() > item.expiry) {
+    newsCache.delete(key);
+    return null;
+  }
+  
+  return item.data;
+};
+
+const setToCache = (key, data, ttl = CACHE_TTL) => {
+  // Limit cache size to prevent memory issues
+  if (newsCache.size > 50) {
+    const firstKey = newsCache.keys().next().value;
+    newsCache.delete(firstKey);
+  }
+  
+  newsCache.set(key, {
+    data,
+    expiry: Date.now() + ttl
+  });
+};
+
+// Clear expired cache entries periodically
+const clearExpiredCache = () => {
+  const now = Date.now();
+  for (const [key, item] of newsCache.entries()) {
+    if (now > item.expiry) {
+      newsCache.delete(key);
+    }
+  }
+};
 
 // NewsAPI Configuration
 const NEWS_API_KEY = process.env.NEWS_API_KEY;
 const NEWS_API_BASE = 'https://newsapi.org/v2';
 
-// Rate limiting middleware
+// ✅ VERCEL FIX: More permissive rate limiting for serverless
 const newsRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 200, // Increased limit for serverless
   message: {
     success: false,
     message: 'Too many news requests, please try again later.',
@@ -23,15 +60,35 @@ const newsRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting in development
+    return process.env.NODE_ENV === 'development';
+  }
 });
 
 // Apply rate limiting to all news routes
 router.use(newsRateLimit);
 
-// ✅ Get Top Headlines
+// ✅ VERCEL FIX: Environment validation middleware
+router.use((req, res, next) => {
+  if (!NEWS_API_KEY) {
+    console.error('❌ NEWS_API_KEY environment variable not set');
+    return res.status(500).json({
+      success: false,
+      message: 'News service configuration error',
+      error: 'Service temporarily unavailable'
+    });
+  }
+  next();
+});
+
+// ✅ Get Top Headlines - Vercel Optimized
 router.get('/headlines', async (req, res) => {
   try {
     console.log('📰 Headlines request:', req.query);
+    
+    // Clear expired cache entries
+    clearExpiredCache();
     
     const {
       category = 'general',
@@ -50,14 +107,18 @@ router.get('/headlines', async (req, res) => {
       });
     }
 
+    // Validate and limit pageSize for Vercel
+    const limitedPageSize = Math.min(parseInt(pageSize), 50); // Reduced for serverless
+    const limitedPage = Math.max(1, Math.min(parseInt(page), 5)); // Limit pages
+
     // Create cache key
-    const cacheKey = `headlines_${category}_${country}_${page}_${pageSize}`;
+    const cacheKey = `headlines_${category}_${country}_${limitedPage}_${limitedPageSize}`;
     
     // Check cache first
-    const cachedData = newsCache.get(cacheKey);
+    const cachedData = getFromCache(cacheKey);
     if (cachedData) {
       console.log('📋 Cache hit for headlines');
-      return res.json({
+      return res.status(200).json({
         success: true,
         data: cachedData,
         cached: true,
@@ -71,14 +132,19 @@ router.get('/headlines', async (req, res) => {
       apiKey: NEWS_API_KEY,
       category,
       country,
-      page: parseInt(page),
-      pageSize: Math.min(parseInt(pageSize), 100) // Max 100 articles
+      page: limitedPage,
+      pageSize: limitedPageSize
     };
 
     console.log('🔍 Fetching headlines from NewsAPI...');
+    
+    // ✅ VERCEL FIX: Shorter timeout for serverless
     const response = await axios.get(url, { 
       params,
-      timeout: 10000 // 10 second timeout
+      timeout: 8000, // 8 second timeout (reduced)
+      headers: {
+        'User-Agent': 'Payana-News-Proxy/1.0'
+      }
     });
 
     if (response.data.status === 'ok') {
@@ -87,7 +153,8 @@ router.get('/headlines', async (req, res) => {
         article.title && 
         article.title !== '[Removed]' && 
         article.description &&
-        article.urlToImage
+        article.urlToImage &&
+        article.url
       );
 
       const responseData = {
@@ -97,13 +164,14 @@ router.get('/headlines', async (req, res) => {
       };
 
       // Cache the response
-      newsCache.set(cacheKey, responseData);
+      setToCache(cacheKey, responseData);
 
-      res.json({
+      res.status(200).json({
         success: true,
         data: responseData,
         cached: false,
-        fetchTime: new Date().toISOString()
+        fetchTime: new Date().toISOString(),
+        source: 'NewsAPI'
       });
 
       console.log('✅ Headlines fetched successfully:', validArticles.length, 'articles');
@@ -114,6 +182,14 @@ router.get('/headlines', async (req, res) => {
   } catch (error) {
     console.error('❌ Headlines error:', error.message);
     
+    if (error.code === 'ECONNABORTED') {
+      return res.status(408).json({
+        success: false,
+        message: 'Request timeout - please try again',
+        retryAfter: '30 seconds'
+      });
+    }
+    
     if (error.response?.status === 429) {
       return res.status(429).json({
         success: false,
@@ -123,6 +199,7 @@ router.get('/headlines', async (req, res) => {
     }
 
     if (error.response?.status === 401) {
+      console.error('❌ NewsAPI authentication failed');
       return res.status(500).json({
         success: false,
         message: 'News service temporarily unavailable'
@@ -132,15 +209,19 @@ router.get('/headlines', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch news headlines',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Service temporarily unavailable',
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ Search News
+// ✅ Search News - Vercel Optimized
 router.get('/search', async (req, res) => {
   try {
     console.log('🔍 Search request:', req.query);
+    
+    // Clear expired cache entries
+    clearExpiredCache();
     
     const {
       q,
@@ -168,14 +249,19 @@ router.get('/search', async (req, res) => {
       });
     }
 
+    // Validate and limit for Vercel
+    const limitedPageSize = Math.min(parseInt(pageSize), 50);
+    const limitedPage = Math.max(1, Math.min(parseInt(page), 3)); // Limit search pages more strictly
+    const sanitizedQuery = q.trim().substring(0, 100); // Limit query length
+
     // Create cache key
-    const cacheKey = `search_${encodeURIComponent(q)}_${page}_${pageSize}_${sortBy}_${language}`;
+    const cacheKey = `search_${encodeURIComponent(sanitizedQuery)}_${limitedPage}_${limitedPageSize}_${sortBy}_${language}`;
     
     // Check cache first
-    const cachedData = newsCache.get(cacheKey);
+    const cachedData = getFromCache(cacheKey);
     if (cachedData) {
       console.log('📋 Cache hit for search');
-      return res.json({
+      return res.status(200).json({
         success: true,
         data: cachedData,
         cached: true,
@@ -187,9 +273,9 @@ router.get('/search', async (req, res) => {
     const url = `${NEWS_API_BASE}/everything`;
     const params = {
       apiKey: NEWS_API_KEY,
-      q: q.trim(),
-      page: parseInt(page),
-      pageSize: Math.min(parseInt(pageSize), 100),
+      q: sanitizedQuery,
+      page: limitedPage,
+      pageSize: limitedPageSize,
       sortBy,
       language
     };
@@ -197,7 +283,10 @@ router.get('/search', async (req, res) => {
     console.log('🔍 Searching news from NewsAPI...');
     const response = await axios.get(url, { 
       params,
-      timeout: 10000
+      timeout: 8000,
+      headers: {
+        'User-Agent': 'Payana-News-Proxy/1.0'
+      }
     });
 
     if (response.data.status === 'ok') {
@@ -206,7 +295,8 @@ router.get('/search', async (req, res) => {
         article.title && 
         article.title !== '[Removed]' && 
         article.description &&
-        article.urlToImage
+        article.urlToImage &&
+        article.url
       );
 
       const responseData = {
@@ -216,13 +306,14 @@ router.get('/search', async (req, res) => {
       };
 
       // Cache the response
-      newsCache.set(cacheKey, responseData);
+      setToCache(cacheKey, responseData);
 
-      res.json({
+      res.status(200).json({
         success: true,
         data: responseData,
         cached: false,
-        fetchTime: new Date().toISOString()
+        fetchTime: new Date().toISOString(),
+        source: 'NewsAPI'
       });
 
       console.log('✅ Search completed successfully:', validArticles.length, 'articles');
@@ -232,6 +323,14 @@ router.get('/search', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Search error:', error.message);
+    
+    if (error.code === 'ECONNABORTED') {
+      return res.status(408).json({
+        success: false,
+        message: 'Search timeout - please try again',
+        retryAfter: '30 seconds'
+      });
+    }
     
     if (error.response?.status === 429) {
       return res.status(429).json({
@@ -244,12 +343,13 @@ router.get('/search', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to search news',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Service temporarily unavailable',
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ Get News Sources
+// ✅ Get News Sources - Vercel Optimized
 router.get('/sources', async (req, res) => {
   try {
     console.log('📡 Sources request:', req.query);
@@ -264,10 +364,10 @@ router.get('/sources', async (req, res) => {
     const cacheKey = `sources_${category || 'all'}_${language}_${country}`;
     
     // Check cache first (longer cache for sources - 1 hour)
-    const cachedData = newsCache.get(cacheKey);
+    const cachedData = getFromCache(cacheKey);
     if (cachedData) {
       console.log('📋 Cache hit for sources');
-      return res.json({
+      return res.status(200).json({
         success: true,
         data: cachedData,
         cached: true,
@@ -290,18 +390,22 @@ router.get('/sources', async (req, res) => {
     console.log('🔍 Fetching sources from NewsAPI...');
     const response = await axios.get(url, { 
       params,
-      timeout: 10000
+      timeout: 8000,
+      headers: {
+        'User-Agent': 'Payana-News-Proxy/1.0'
+      }
     });
 
     if (response.data.status === 'ok') {
       // Cache for longer (1 hour)
-      newsCache.set(cacheKey, response.data, 3600);
+      setToCache(cacheKey, response.data, 60 * 60 * 1000);
 
-      res.json({
+      res.status(200).json({
         success: true,
         data: response.data,
         cached: false,
-        fetchTime: new Date().toISOString()
+        fetchTime: new Date().toISOString(),
+        source: 'NewsAPI'
       });
 
       console.log('✅ Sources fetched successfully:', response.data.sources.length, 'sources');
@@ -315,48 +419,72 @@ router.get('/sources', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch news sources',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Service temporarily unavailable',
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ Health check for news service
+// ✅ Health check for news service - Vercel Optimized
 router.get('/health', (req, res) => {
-  const cacheStats = newsCache.getStats();
-  
-  res.json({
-    success: true,
-    service: 'News Proxy Service',
-    status: 'Active',
-    timestamp: new Date().toISOString(),
-    cache: {
-      keys: cacheStats.keys,
-      hits: cacheStats.hits,
-      misses: cacheStats.misses,
-      hitRate: cacheStats.keys > 0 ? (cacheStats.hits / (cacheStats.hits + cacheStats.misses) * 100).toFixed(2) + '%' : '0%'
-    },
-    rateLimit: {
-      windowMs: '15 minutes',
-      maxRequests: 100,
-      message: 'Rate limiting active'
-    }
-  });
+  try {
+    // Clean up expired cache entries
+    clearExpiredCache();
+    
+    const cacheStats = {
+      totalKeys: newsCache.size,
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime()
+    };
+    
+    res.status(200).json({
+      success: true,
+      service: 'News Proxy Service (Vercel)',
+      status: 'Active',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'production',
+      cache: {
+        keys: cacheStats.totalKeys,
+        type: 'in-memory',
+        note: 'Cache resets on cold starts (serverless)'
+      },
+      rateLimit: {
+        windowMs: '15 minutes',
+        maxRequests: process.env.NODE_ENV === 'development' ? 'unlimited' : 200,
+        message: 'Rate limiting active'
+      },
+      newsApiStatus: NEWS_API_KEY ? 'configured' : 'missing',
+      memory: {
+        used: `${Math.round(cacheStats.memoryUsage.heapUsed / 1024 / 1024)}MB`,
+        total: `${Math.round(cacheStats.memoryUsage.heapTotal / 1024 / 1024)}MB`
+      },
+      uptime: `${Math.floor(cacheStats.uptime / 60)}m ${Math.floor(cacheStats.uptime % 60)}s`
+    });
+  } catch (error) {
+    console.error('❌ Health check error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Health check failed',
+      error: error.message
+    });
+  }
 });
 
-// ✅ Clear cache endpoint (for admin use)
+// ✅ Clear cache endpoint - Vercel Optimized
 router.post('/clear-cache', (req, res) => {
   try {
-    const cacheKeys = newsCache.keys();
-    newsCache.flushAll();
+    const cacheSize = newsCache.size;
+    newsCache.clear();
     
-    res.json({
+    res.status(200).json({
       success: true,
       message: 'News cache cleared successfully',
-      clearedKeys: cacheKeys.length,
-      timestamp: new Date().toISOString()
+      clearedKeys: cacheSize,
+      timestamp: new Date().toISOString(),
+      note: 'Cache will rebuild on next requests'
     });
 
-    console.log('🗑️ News cache cleared:', cacheKeys.length, 'keys removed');
+    console.log('🗑️ News cache cleared:', cacheSize, 'keys removed');
   } catch (error) {
     console.error('❌ Cache clear error:', error);
     res.status(500).json({
