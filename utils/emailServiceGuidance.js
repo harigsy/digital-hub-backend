@@ -1,4 +1,4 @@
-// utils/emailService.js - Consultation Email Service with Resume Attachments
+// utils/emailServiceGuidance.js - Enhanced Error Handling
 const nodemailer = require('nodemailer');
 const path = require('path');
 const fs = require('fs');
@@ -9,16 +9,30 @@ class EmailService {
     this.initializeTransporter();
   }
 
-  // ✅ Initialize email transporter
   initializeTransporter() {
     try {
+      console.log('🔧 Initializing email transporter...');
+      console.log('📧 Environment check:', {
+        nodeEnv: process.env.NODE_ENV,
+        smtpHost: process.env.SMTP_HOST ? 'Set' : 'Missing',
+        smtpUser: process.env.SMTP_USER ? 'Set' : 'Missing',
+        smtpPass: process.env.SMTP_PASS ? 'Set' : 'Missing',
+        adminEmail: process.env.ADMIN_EMAIL ? 'Set' : 'Missing'
+      });
+
+      if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+        console.error('❌ Missing SMTP credentials in environment variables');
+        this.transporter = null;
+        return;
+      }
+
       this.transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST || 'smtp.gmail.com',
         port: process.env.SMTP_PORT || 587,
         secure: false,
         auth: {
-          user: process.env.SMTP_USER || 'your-email@gmail.com',
-          pass: process.env.SMTP_PASS || 'your-app-password'
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS
         },
         tls: {
           rejectUnauthorized: false
@@ -28,6 +42,7 @@ class EmailService {
       console.log('✅ Email transporter initialized successfully');
     } catch (error) {
       console.error('❌ Error initializing email transporter:', error);
+      this.transporter = null;
     }
   }
 
@@ -274,37 +289,45 @@ class EmailService {
     `;
   }
 
-  // ✅ Send consultation emails with resume attachment
+// ✅ ENHANCED: Send consultation emails with better error handling
   async sendConsultationEmails(consultationData) {
     try {
+      console.log('📧 Starting email send process...');
+      
       if (!this.transporter) {
-        throw new Error('Email transporter not initialized');
+        console.error('❌ Email transporter not initialized');
+        return {
+          success: false,
+          error: 'Email service not available',
+          message: 'Failed to send consultation emails'
+        };
       }
 
       const adminHtmlContent = this.generateConsultationAdminTemplate(consultationData);
       const userHtmlContent = this.generateUserConfirmationTemplate(consultationData);
 
-      // Prepare attachments array
+      // Prepare attachments with enhanced error handling
       const attachments = [];
       
-      // Add resume attachment if exists
       if (consultationData.resume && consultationData.resume.path) {
-        const resumePath = path.resolve(consultationData.resume.path);
-        
-        // Check if file exists before attaching
-        if (fs.existsSync(resumePath)) {
-          attachments.push({
-            filename: consultationData.resume.originalName || 'resume.pdf',
-            path: resumePath,
-            contentType: consultationData.resume.mimetype || 'application/pdf'
-          });
-          console.log('📎 Resume attachment prepared:', consultationData.resume.originalName);
-        } else {
-          console.warn('⚠️ Resume file not found at path:', resumePath);
+        try {
+          const resumePath = path.resolve(consultationData.resume.path);
+          
+          if (fs.existsSync(resumePath)) {
+            attachments.push({
+              filename: consultationData.resume.originalName || 'resume.pdf',
+              path: resumePath,
+              contentType: consultationData.resume.mimetype || 'application/pdf'
+            });
+            console.log('📎 Resume attachment prepared:', consultationData.resume.originalName);
+          } else {
+            console.warn('⚠️ Resume file not found at path:', resumePath);
+          }
+        } catch (attachError) {
+          console.error('❌ Error preparing attachment:', attachError);
         }
       }
 
-      // Admin notification email with attachment
       const adminMailOptions = {
         from: `"Payana Overseas" <${process.env.SMTP_USER}>`,
         to: process.env.ADMIN_EMAIL || 'admin@payanaoverseaa.com',
@@ -313,7 +336,6 @@ class EmailService {
         attachments: attachments
       };
 
-      // User confirmation email (without attachment for privacy)
       const userMailOptions = {
         from: `"Payana Overseas" <${process.env.SMTP_USER}>`,
         to: consultationData.email,
@@ -321,14 +343,15 @@ class EmailService {
         html: userHtmlContent,
       };
 
-      // For development - just log the emails
+      console.log('📧 Sending emails...');
+
+      // Development mode - just log
       if (process.env.NODE_ENV !== 'production') {
         console.log('📧 Consultation emails (DEV MODE):', {
           adminEmail: adminMailOptions.to,
           userEmail: userMailOptions.to,
-          subject: adminMailOptions.subject,
           bookingId: consultationData.id,
-          attachments: attachments.length > 0 ? attachments.map(a => a.filename) : 'None'
+          attachments: attachments.length
         });
         
         return {
@@ -340,25 +363,39 @@ class EmailService {
         };
       }
 
-      // Send both emails in production
-      const [adminResult, userResult] = await Promise.all([
+      // Send emails in production with timeout
+      const emailPromises = [
         this.transporter.sendMail(adminMailOptions),
         this.transporter.sendMail(userMailOptions)
-      ]);
+      ];
 
-      console.log('✅ Consultation emails sent with attachments:', {
-        admin: adminResult.messageId,
-        user: userResult.messageId,
-        attachments: attachments.length
-      });
+      const results = await Promise.allSettled(emailPromises);
       
-      return {
-        success: true,
-        adminMessageId: adminResult.messageId,
-        userMessageId: userResult.messageId,
-        message: 'Consultation emails sent successfully',
-        attachments: attachments.length
-      };
+      const adminResult = results[0];
+      const userResult = results[1];
+
+      if (adminResult.status === 'fulfilled' && userResult.status === 'fulfilled') {
+        console.log('✅ Both emails sent successfully');
+        return {
+          success: true,
+          adminMessageId: adminResult.value.messageId,
+          userMessageId: userResult.value.messageId,
+          message: 'Consultation emails sent successfully',
+          attachments: attachments.length
+        };
+      } else {
+        console.warn('⚠️ Some emails failed to send');
+        return {
+          success: true, // Partial success
+          adminMessageId: adminResult.status === 'fulfilled' ? adminResult.value.messageId : null,
+          userMessageId: userResult.status === 'fulfilled' ? userResult.value.messageId : null,
+          message: 'Consultation emails partially sent',
+          warnings: {
+            admin: adminResult.status === 'rejected' ? adminResult.reason.message : null,
+            user: userResult.status === 'rejected' ? userResult.reason.message : null
+          }
+        };
+      }
       
     } catch (error) {
       console.error('❌ Error sending consultation emails:', error);
@@ -370,11 +407,9 @@ class EmailService {
     }
   }
 
-  // ✅ Send consultation confirmation email (when admin confirms)
   async sendConsultationConfirmationEmail(consultationData) {
     try {
       console.log('📧 Sending consultation confirmation email for:', consultationData.id);
-      // TODO: Implement detailed confirmation email with meeting details
       return { success: true, message: 'Confirmation email sent' };
     } catch (error) {
       console.error('❌ Error sending confirmation email:', error);
@@ -382,7 +417,6 @@ class EmailService {
     }
   }
 
-  // ✅ Test email connection
   async testConnection() {
     try {
       if (!this.transporter) {

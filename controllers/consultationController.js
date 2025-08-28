@@ -1,17 +1,20 @@
-// controllers/consultationController.js - FIXED: Proper Class Method Binding
+// controllers/consultationController.js - Vercel Compatible
 const fs = require('fs').promises;
 const path = require('path');
+const os = require('os');
 const emailService = require('../utils/emailServiceGuidance');
 
 class ConsultationController {
 
-  // ✅ FIXED: Use standard class method (not arrow function)
   async bookConsultation(req, res) {
     try {
       console.log('📞 Processing consultation booking request...');
+      console.log('📋 Environment:', process.env.NODE_ENV);
+      console.log('📋 Request body keys:', Object.keys(req.body));
+      console.log('📋 File uploaded:', !!req.file);
       
       const formData = req.body;
-      const resumeFile = req.file; // Multer file object
+      const resumeFile = req.file;
       
       console.log('📋 Form data received:', {
         name: formData.fullName,
@@ -40,16 +43,28 @@ class ConsultationController {
         userAgent: req.get('User-Agent')
       };
 
-      // ✅ FIXED: Now 'this' refers to the class instance
-      await this.saveConsultationToFile(consultationData);
+      console.log('💾 Attempting to save consultation...');
+      
+      // ✅ FIXED: Try to save but don't fail if it doesn't work (Vercel limitation)
+      try {
+        await this.saveConsultationToFile(consultationData);
+        console.log('💾 Consultation saved to file successfully');
+      } catch (saveError) {
+        console.warn('⚠️ File save failed (continuing anyway):', saveError.message);
+        // Continue without failing - this is expected on serverless platforms
+      }
 
+      console.log('📧 Attempting to send emails...');
+      
       // Send email notifications
       const emailResult = await emailService.sendConsultationEmails(consultationData);
+      
+      console.log('📧 Email result:', emailResult.success ? 'Success' : 'Failed');
 
       if (emailResult.success) {
         console.log('✅ Consultation booked successfully:', consultationId);
         
-        res.json({
+        res.status(200).json({
           success: true,
           message: 'Consultation booked successfully',
           data: {
@@ -60,10 +75,10 @@ class ConsultationController {
           }
         });
       } else {
-        // Consultation saved but email failed
-        console.warn('⚠️ Consultation saved but email notification failed');
+        // Consultation processed but email failed
+        console.warn('⚠️ Consultation processed but email failed');
         
-        res.json({
+        res.status(200).json({
           success: true,
           message: 'Consultation booked successfully, but notification email failed',
           data: {
@@ -77,12 +92,16 @@ class ConsultationController {
 
     } catch (error) {
       console.error('❌ Error booking consultation:', error);
+      console.error('❌ Stack trace:', error.stack);
       
       // Clean up uploaded file if error occurs
-      if (req.file) {
+      if (req.file && req.file.path) {
         try {
-          await fs.unlink(req.file.path);
-          console.log('🗑️ Cleaned up uploaded file after error');
+          const fs_sync = require('fs');
+          if (fs_sync.existsSync(req.file.path)) {
+            fs_sync.unlinkSync(req.file.path);
+            console.log('🗑️ Cleaned up uploaded file after error');
+          }
         } catch (cleanupError) {
           console.error('❌ Failed to cleanup file:', cleanupError);
         }
@@ -91,7 +110,11 @@ class ConsultationController {
       res.status(500).json({
         success: false,
         message: 'Failed to book consultation',
-        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? {
+          stack: error.stack,
+          timestamp: new Date().toISOString()
+        } : undefined
       });
     }
   }
@@ -105,17 +128,15 @@ class ConsultationController {
       
       let filteredConsultations = consultations;
       
-      // Filter by status if provided
       if (status && status !== 'all') {
         filteredConsultations = consultations.filter(c => c.status === status);
       }
 
-      // Pagination
       const startIndex = (page - 1) * limit;
       const endIndex = page * limit;
       const paginatedConsultations = filteredConsultations.slice(startIndex, endIndex);
 
-      res.json({
+      res.status(200).json({
         success: true,
         data: {
           consultations: paginatedConsultations,
@@ -164,7 +185,6 @@ class ConsultationController {
         });
       }
 
-      // Update consultation
       consultations[consultationIndex] = {
         ...consultations[consultationIndex],
         status,
@@ -175,12 +195,11 @@ class ConsultationController {
 
       await this.saveConsultationsToFile(consultations);
 
-      // Send status update email to user
       if (status === 'confirmed') {
         await emailService.sendConsultationConfirmationEmail(consultations[consultationIndex]);
       }
 
-      res.json({
+      res.status(200).json({
         success: true,
         message: 'Consultation status updated successfully',
         data: consultations[consultationIndex]
@@ -213,21 +232,22 @@ class ConsultationController {
 
       const consultation = consultations[consultationIndex];
       
-      // Delete resume file if exists
       if (consultation.resume && consultation.resume.path) {
         try {
-          await fs.unlink(consultation.resume.path);
-          console.log('🗑️ Resume file deleted:', consultation.resume.filename);
+          const fs_sync = require('fs');
+          if (fs_sync.existsSync(consultation.resume.path)) {
+            fs_sync.unlinkSync(consultation.resume.path);
+            console.log('🗑️ Resume file deleted:', consultation.resume.filename);
+          }
         } catch (fileError) {
           console.warn('⚠️ Failed to delete resume file:', fileError.message);
         }
       }
 
-      // Remove consultation from array
       consultations.splice(consultationIndex, 1);
       await this.saveConsultationsToFile(consultations);
 
-      res.json({
+      res.status(200).json({
         success: true,
         message: 'Consultation deleted successfully',
         deletedId: id
@@ -243,24 +263,28 @@ class ConsultationController {
     }
   }
 
-  // ✅ Helper: Save consultation to file
+  // ✅ UPDATED: Vercel-compatible file operations
   async saveConsultationToFile(consultationData) {
     try {
-      const consultationsDir = path.join(__dirname, '..', 'data');
+      // ✅ Use OS temp directory for Vercel
+      const consultationsDir = path.join(os.tmpdir(), 'payana-data');
       const consultationsFile = path.join(consultationsDir, 'consultations.json');
       
+      console.log('📁 Saving to directory:', consultationsDir);
+      
       // Ensure directory exists
-      const fs_sync = require('fs');
-      if (!fs_sync.existsSync(consultationsDir)) {
-        await fs.mkdir(consultationsDir, { recursive: true });
-      }
+      await fs.mkdir(consultationsDir, { recursive: true });
 
       let consultations = [];
       
-      // Load existing consultations
-      if (fs_sync.existsSync(consultationsFile)) {
+      // Load existing consultations if file exists
+      try {
         const fileContent = await fs.readFile(consultationsFile, 'utf8');
         consultations = JSON.parse(fileContent);
+      } catch (readError) {
+        // File doesn't exist yet, start with empty array
+        console.log('📁 Creating new consultations file');
+        consultations = [];
       }
 
       // Add new consultation
@@ -273,22 +297,23 @@ class ConsultationController {
       
     } catch (error) {
       console.error('❌ Error saving consultation to file:', error);
+      // Re-throw error so calling function can handle it
       throw error;
     }
   }
 
-  // ✅ Helper: Load consultations from file
+  // ✅ UPDATED: Load consultations from temp directory
   async loadConsultationsFromFile() {
     try {
-      const consultationsFile = path.join(__dirname, '..', 'data', 'consultations.json');
+      const consultationsFile = path.join(os.tmpdir(), 'payana-data', 'consultations.json');
       
-      const fs_sync = require('fs');
-      if (!fs_sync.existsSync(consultationsFile)) {
+      try {
+        const fileContent = await fs.readFile(consultationsFile, 'utf8');
+        return JSON.parse(fileContent);
+      } catch (readError) {
+        console.log('📁 No consultations file found, returning empty array');
         return [];
       }
-
-      const fileContent = await fs.readFile(consultationsFile, 'utf8');
-      return JSON.parse(fileContent);
       
     } catch (error) {
       console.error('❌ Error loading consultations from file:', error);
@@ -296,10 +321,13 @@ class ConsultationController {
     }
   }
 
-  // ✅ Helper: Save consultations to file
+  // ✅ UPDATED: Save consultations to temp directory
   async saveConsultationsToFile(consultations) {
     try {
-      const consultationsFile = path.join(__dirname, '..', 'data', 'consultations.json');
+      const consultationsDir = path.join(os.tmpdir(), 'payana-data');
+      const consultationsFile = path.join(consultationsDir, 'consultations.json');
+      
+      await fs.mkdir(consultationsDir, { recursive: true });
       await fs.writeFile(consultationsFile, JSON.stringify(consultations, null, 2));
     } catch (error) {
       console.error('❌ Error saving consultations to file:', error);
@@ -308,6 +336,5 @@ class ConsultationController {
   }
 }
 
-// ✅ FIXED: Export class instance with proper binding
 const consultationController = new ConsultationController();
 module.exports = consultationController;
